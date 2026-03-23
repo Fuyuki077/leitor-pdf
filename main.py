@@ -1,60 +1,146 @@
 import re
 import os
-import sys
 import time
+import logging
 import pdfplumber
 import openpyxl
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from threading import Thread
 
+# Configurações de Cores e Estilo
+COLOR_BG = "#F5F7F8"          # Cinza muito claro (fundo)
+COLOR_CARD = "#FFFFFF"        # Branco (áreas de conteúdo)
+COLOR_PRIMARY = "#2E7D32"      # Verde (botão principal)
+COLOR_ACCENT = "#1976D2"       # Azul (seleção de pasta)
+COLOR_TEXT = "#333333"         # Cinza escuro (texto)
+
 class LeitorPDFApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Extrator de Históricos Escolares")
-        self.root.geometry("600x450")
-        self.root.configure(padx=20, pady=20)
+        self.root.title("Extrator de Históricos UERR")
+        self.root.geometry("700x600")
+        self.root.configure(bg=COLOR_BG)
 
-        # Variáveis de controle
         self.pasta_selecionada = tk.StringVar()
-        self.status_var = tk.StringVar(value="Aguardando seleção de pasta...")
-
+        self.status_var = tk.StringVar(value="Pronto para iniciar")
+        
+        self.setup_styles()
         self.setup_ui()
 
-    def setup_ui(self):
-        # Título
-        tk.Label(self.root, text="Conversor de PDF para Excel", font=("Arial", 14, "bold")).pack(pady=(0, 20))
-
-        # Seleção de Pasta
-        frame_pasta = tk.Frame(self.root)
-        frame_pasta.pack(fill="x", pady=10)
+    def setup_styles(self):
+        style = ttk.Style()
+        style.theme_use('clam')
         
-        tk.Entry(frame_pasta, textvariable=self.pasta_selecionada, state="readonly", width=50).pack(side="left", padx=(0, 10), expand=True, fill="x")
-        tk.Button(frame_pasta, text="Selecionar Pasta", command=self.selecionar_pasta).pack(side="right")
+        # Estilização da Progressbar
+        style.configure("TProgressbar", thickness=10, troughcolor=COLOR_BG, background=COLOR_PRIMARY)
+        
+    def setup_ui(self):
+        # Container Principal com Padding
+        main_container = tk.Frame(self.root, bg=COLOR_BG, padx=30, pady=30)
+        main_container.pack(fill="both", expand=True)
 
-        # Log de Atividades
-        tk.Label(self.root, text="Log de Processamento:").pack(anchor="w")
-        self.log_text = tk.Text(self.root, height=10, state="disabled", font=("Consolas", 9))
+        # --- CABEÇALHO ---
+        header_frame = tk.Frame(main_container, bg=COLOR_BG)
+        header_frame.pack(fill="x", pady=(0, 20))
+        
+        tk.Label(
+            header_frame,
+            text="Conversor de Histórico UERR",
+            font=("Segoe UI", 18, "bold"),
+            bg=COLOR_BG,
+            fg=COLOR_PRIMARY
+        ).pack(anchor="w")
+        
+        tk.Label(
+            header_frame,
+            text="Selecione a pasta contendo os arquivos PDF para extração automática.",
+            font=("Segoe UI", 10),
+            bg=COLOR_BG,
+            fg="#333333"
+        ).pack(anchor="w")
+
+        # --- CARD DE SELEÇÃO ---
+        selection_card = tk.Frame(main_container, bg=COLOR_CARD, padx=15, pady=15, highlightthickness=1, highlightbackground="#DDDDDD")
+        selection_card.pack(fill="x", pady=10)
+
+        tk.Label(selection_card, text="Pasta de Origem:", font=("Segoe UI", 9, "bold"), bg=COLOR_CARD).pack(anchor="w", pady=(0, 5))
+        
+        path_frame = tk.Frame(selection_card, bg=COLOR_CARD)
+        path_frame.pack(fill="x")
+
+        self.entry_path = tk.Entry(
+            path_frame,
+            textvariable=self.pasta_selecionada,
+            font=("Segoe UI", 10),
+            state="readonly",
+            relief="flat",
+            bg="#F0F0F0"
+        )
+        self.entry_path.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 10))
+
+        tk.Button(
+            path_frame,
+            text="Selecione...",
+            font=("Segoe UI", 9),
+            bg=COLOR_ACCENT,
+            fg="white",
+            relief="flat",
+            activebackground="#1565C0",
+            activeforeground="white",
+            cursor="hand2",
+            command=self.selecionar_pasta,
+            width=12
+        ).pack(side="right", ipady=4)
+
+        # --- ÁREA DE LOG ---
+        log_frame = tk.Frame(main_container, bg=COLOR_BG)
+        log_frame.pack(fill="both", expand=True, pady=15)
+        
+        tk.Label(log_frame, text="Log de Atividades:", font=("Segoe UI", 9, "bold"), bg=COLOR_BG).pack(anchor="w")
+        
+        self.log_text = tk.Text(
+            log_frame, 
+            height=10, 
+            font=("Consolas", 9),
+            relief="flat",
+            bg="#2C3E50",  # Fundo escuro para o log
+            fg="#ECF0F1",
+            padx=10,
+            pady=10,
+            state="disabled"
+        )
         self.log_text.pack(fill="both", expand=True, pady=5)
 
-        # Barra de Progresso
-        self.progress = ttk.Progressbar(self.root, orient="horizontal", mode="determinate")
-        self.progress.pack(fill="x", pady=10)
+        # --- RODAPÉ (Progresso e Ação) ---
+        self.progress = ttk.Progressbar(main_container, orient="horizontal", mode="determinate", style="TProgressbar",)
+        self.progress.pack(fill="x", pady=(10, 5))
+        
+        self.lbl_status = tk.Label(main_container, textvariable=self.status_var, font=("Segoe UI", 8), bg=COLOR_BG, fg="#888888")
+        self.lbl_status.pack(anchor="e")
 
-        # Botão Iniciar
-        self.btn_iniciar = tk.Button(self.root, text="GERAR RELATÓRIOS", bg="#4CAF50", fg="white", 
-                                     font=("Arial", 10, "bold"), height=2, command=self.iniciar_processamento)
-        self.btn_iniciar.pack(fill="x", pady=10)
+        self.btn_iniciar = tk.Button(
+            main_container,
+            text="GERAR RELATÓRIOS EXCEL",
+            bg=COLOR_PRIMARY,
+            fg="white",
+            font=("Segoe UI", 11, "bold"),
+            relief="flat",
+            activebackground="#1B5E20",
+            activeforeground="white",
+            cursor="hand2",
+            height=2,
+            command=self.iniciar_processamento
+        )
+        self.btn_iniciar.pack(fill="x", pady=(15, 0))
 
-        # Status
-        tk.Label(self.root, textvariable=self.status_var, fg="gray").pack()
+    # --- LÓGICA MANTIDA E MELHORADA ---
 
     def log(self, mensagem):
         self.log_text.config(state="normal")
-        self.log_text.insert("end", f"[{time.strftime('%H:%M:%S')}] {mensagem}\n")
+        self.log_text.insert("end", f"› {time.strftime('%H:%M:%S')} | {mensagem}\n")
         self.log_text.see("end")
         self.log_text.config(state="disabled")
-        self.root.update_idletasks()
 
     def selecionar_pasta(self):
         pasta = filedialog.askdirectory()
@@ -65,100 +151,229 @@ class LeitorPDFApp:
     def iniciar_processamento(self):
         pasta = self.pasta_selecionada.get()
         if not pasta:
-            messagebox.showwarning("Aviso", "Por favor, selecione uma pasta primeiro!")
+            messagebox.showwarning("Aviso", "Por favor, selecione uma pasta primeiro.")
             return
 
-        # Rodar em uma thread separada para não travar a janela
-        self.btn_iniciar.config(state="disabled")
+        self.btn_iniciar.config(state="disabled", bg="#999999")
+        self.status_var.set("Iniciando processamento...")
         Thread(target=self.processar_arquivos, args=(pasta,), daemon=True).start()
 
+    # (Mantenha as funções de processamento como limpar_texto, normalizar_linha, etc., iguais à última versão corrigida)
+    
     def processar_arquivos(self, pasta):
-        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith('.pdf')]
+        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith(".pdf")]
         if not arquivos:
-            self.log("Nenhum PDF encontrado na pasta.")
-            self.btn_iniciar.config(state="normal")
+            self.log("Nenhum arquivo PDF encontrado na pasta.")
+            self.root.after(0, lambda: self.btn_iniciar.config(state="normal", bg=COLOR_PRIMARY))
             return
 
-        total = len(arquivos)
-        self.progress["maximum"] = total
+        self.progress["maximum"] = len(arquivos)
         sucessos = 0
-
+        
         for i, nome_arq in enumerate(arquivos):
             caminho = os.path.join(pasta, nome_arq)
-            self.status_var.set(f"Processando {i+1} de {total}...")
+            self.root.after(0, lambda v=i + 1: self.status_var.set(f"Processando arquivo {v} de {len(arquivos)}"))
             
-            resultado = self.extrair_dados(caminho, pasta)
-            
-            if resultado:
+            if self.extrair_dados(caminho, pasta):
                 self.log(f"Sucesso: {nome_arq}")
                 sucessos += 1
             else:
-                self.log(f"Erro ou Formato Inválido: {nome_arq}")
+                self.log(f"Falha: {nome_arq}")
+                
+            self.root.after(0, lambda v=i + 1: self.progress.configure(value=v))
+
+        self.status_var.set("Processamento concluído")
+        self.root.after(0, lambda: self.btn_iniciar.config(state="normal", bg=COLOR_PRIMARY))
+        self.root.after(0, lambda: messagebox.showinfo("Concluído", f"Processamento finalizado!\nArquivos com sucesso: {sucessos}/{len(arquivos)}"))
+
+    # ... (restante das funções: limpar_texto, eh_cabecalho, inicio_de_registro, mesclar_continuacao, 
+    # separar_faltas_situacao, normalizar_linha, extrair_dados, calcular_medias_semestrais, quebrar_linha_colapsada)
+
+    def limpar_texto(self, texto):
+        if texto is None:
+            return ""
+        texto = str(texto)
+        texto = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', texto)
+        texto = texto.replace("\r", "\n")
+        return texto.strip()
+
+    def eh_cabecalho(self, celulas):
+        texto = " ".join(celulas).lower()
+        return (
+            "ord" in texto
+            and "semestre" in texto
+            and "disciplina" in texto
+            and "professor" in texto
+        )
+
+    def inicio_de_registro(self, celulas):
+        if not celulas:
+            return False
+        texto = " ".join(celulas)
+        return bool(re.match(r"^\d+\s+20\d{2}\.\d", texto))
+
+    def mesclar_continuacao(self, atual, complemento):
+        limite = max(len(atual), len(complemento))
+        while len(atual) < limite:
+            atual.append("")
+        while len(complemento) < limite:
+            complemento.append("")
+
+        for i, valor in enumerate(complemento):
+            valor = self.limpar_texto(valor)
+            if not valor:
+                continue
+            if atual[i]:
+                if valor not in atual[i]:
+                    atual[i] = f"{atual[i]}\n{valor}"
+            else:
+                atual[i] = valor
+        return atual
+
+    def separar_faltas_situacao(self, texto):
+        texto = self.limpar_texto(texto)
+        if not texto:
+            return "", ""
+        normal = re.sub(r"\s+", " ", texto).strip()
+        if "Aproveitada" in normal and "Reprovado" not in normal and "Aprovado" not in normal:
+            return "", "Disciplina Aproveitada"
+        if "Reprovado" in normal or "Aprovado" in normal:
+            m = re.search(r"\d+", normal)
+            faltas = m.group(0) if m else ""
+            situacao = re.sub(r"\d+", "", normal).strip()
+            situacao = re.sub(r"\s+", " ", situacao).strip()
+            return faltas, situacao
+        m = re.match(r"^(\d+)\s*(.*)$", normal)
+        if m:
+            return m.group(1), m.group(2).strip()
+        return "", normal
+
+    def normalizar_linha(self, celulas):
+        # Limpa as células e remove vazios
+        celulas = [self.limpar_texto(c) for c in celulas if self.limpar_texto(c) != ""]
+        
+        if not celulas:
+            return [""] * 8  # Aumentado para 8 para alinhar com o Regex
+
+        # Se a linha estiver colapsada em uma única string
+        if len(celulas) == 1:
+            tentativa = self.quebrar_linha_colapsada(celulas[0])
+            if tentativa: 
+                return tentativa  # Retorna os 8 grupos do Regex
+
+        # Se houver mais colunas (PDFs com tabelas bem definidas), 
+        # garantimos um mínimo de 8 colunas sem cortar o excesso
+        while len(celulas) < 8:
+            celulas.append("")
             
-            self.progress["value"] = i + 1
-            self.root.update_idletasks()
+        return celulas # Removido o [:7] para não perder a última coluna
 
-        self.status_var.set("Concluído!")
-        self.btn_iniciar.config(state="normal")
-        messagebox.showinfo("Finalizado", f"Processamento concluído!\n\nSucessos: {sucessos}\nTotal: {total}")
+    def extrair_dados(self, caminho, pasta_destino):
+        try:
+            dados_aluno = {"nome": "N/A", "cpf": "N/A", "mat": "0000", "curso": "N/A"}
+            linhas_brutas = []
+            registro_atual = None
+            fim_alcancado = False
 
-    # --- Lógica de Extração (Sua lógica original adaptada) ---
+            with pdfplumber.open(caminho) as pdf:
+                for page in pdf.pages:
+                    if fim_alcancado: break
+                    texto = page.extract_text()
+                    if texto:
+                        if dados_aluno["nome"] == "N/A":
+                            n = re.search(r"Aluno\(a\):\s*(.*?)(Nascimento|CPF|$)", texto, re.DOTALL)
+                            if n: dados_aluno["nome"] = self.limpar_texto(n.group(1))
+                            c = re.search(r"CPF:\s*([\d\.\-]+)", texto)
+                            if c: dados_aluno["cpf"] = c.group(1).strip()
+                            m = re.search(r"Matrícula:\s*(\d+)", texto)
+                            if m: dados_aluno["mat"] = m.group(1).strip()
+                            cur = re.search(r"Curso:\s*(.*?)(Matrícula|Grade|$)", texto, re.DOTALL)
+                            if cur: dados_aluno["curso"] = self.limpar_texto(cur.group(1))
 
-    def separar_coluna(self, texto, expected_count, is_componente=False):
-        texto = str(texto or '').strip()
-        if expected_count <= 1:
-            return [texto.replace('\n', ' ').strip()] if not is_componente else [texto]
-        blocos = re.split(r'\n{2,}', texto)
-        blocos_limpos = [b.strip() for b in blocos if b.strip()]
-        if len(blocos_limpos) == expected_count:
-            return blocos_limpos if is_componente else [b.replace('\n', ' ') for b in blocos_limpos]
-        simples = [b.strip() for b in texto.split('\n') if b.strip()]
-        if len(simples) == expected_count:
-            return simples
-        while len(blocos_limpos) < expected_count:
-            blocos_limpos.append("-")
-        return blocos_limpos[:expected_count]
+                    tabelas = page.extract_tables() or []
+                    for tabela in tabelas:
+                        if fim_alcancado: break
+                        for linha in tabela:
+                            celulas = [self.limpar_texto(c) for c in linha if c is not None]
+                            if not celulas: continue
+                            
+                            # TRAVA DE SEGURANÇA: Atividades Complementares
+                            if any("ATIVIDADES COMPLEMENTARES" in str(c).upper() for c in celulas):
+                                fim_alcancado = True
+                                break
 
-    def processar_linha_ancorada(self, linha):
-        linha_limpa = [str(c).strip() for c in linha if c is not None and str(c).strip() != '']
-        if len(linha_limpa) < 5 or "Componente" in str(linha[0]): return []
-        
-        ords = [x for x in re.split(r'\n+', linha_limpa[0]) if x.strip().isdigit()]
-        num_discs = len(ords)
-        if num_discs == 0: return []
-        
-        idx_carga = -1
-        for i, celula in enumerate(linha_limpa):
-            if re.search(r'\d+\s*[hH]', celula):
-                idx_carga = i
-                break
-        if idx_carga == -1: return [] 
+                            if self.eh_cabecalho(celulas): continue
 
-        semestres = self.separar_coluna(linha_limpa[1], num_discs)
-        cargas = self.separar_coluna(linha_limpa[idx_carga], num_discs)
-        media_raw = linha_limpa[idx_carga + 1] if idx_carga + 1 < len(linha_limpa) else "-"
-        medias = self.separar_coluna(media_raw, num_discs)
-        
-        bloco_restante = " ".join(linha_limpa[idx_carga + 2:])
-        padrao_sit = r'(Aprovado|Reprovado|Cursando|Trancado|Dispensado|Disp\.)'
-        situacoes = [s.title() for s in re.findall(padrao_sit, bloco_restante, flags=re.IGNORECASE)]
-        faltas = re.findall(r'\b\d+\b', re.sub(padrao_sit, ' ', bloco_restante, flags=re.IGNORECASE))
-        
-        while len(situacoes) < num_discs: situacoes.append("-")
-        while len(faltas) < num_discs: faltas.append("-")
+                            if self.inicio_de_registro(celulas):
+                                if registro_atual is not None:
+                                    linhas_brutas.append(registro_atual)
+                                registro_atual = self.normalizar_linha(celulas)
+                            else:
+                                texto_l = " ".join(celulas)
+                                if re.match(r"^\d+\s+20\d{2}\.\d", texto_l):
+                                    if registro_atual is not None:
+                                        linhas_brutas.append(registro_atual)
+                                    registro_atual = self.normalizar_linha(celulas)
+                                elif registro_atual is not None:
+                                    registro_atual = self.mesclar_continuacao(registro_atual, self.normalizar_linha(celulas))
 
-        meio = linha_limpa[2:idx_carga]
-        disc_str, prof_str = (" ".join(meio[:-1]), meio[-1]) if len(meio) >= 2 else (meio[0] if meio else "-", "-")
-        disciplinas = self.separar_coluna(disc_str, num_discs, is_componente=True)
-        professores = self.separar_coluna(prof_str, num_discs, is_componente=True)
+            if registro_atual is not None:
+                linhas_brutas.append(registro_atual)
 
-        return [[ords[i], semestres[i], disciplinas[i], professores[i], cargas[i], medias[i], faltas[i], situacoes[i]] for i in range(num_discs)]
+            if not linhas_brutas: return False
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Historico"
+            ws.append(["Aluno", "CPF", "Curso", "Matrícula", "Ord", "Semestre", "Disciplina", "Professor", "CH", "Média", "Faltas", "Situação"])
+
+            for d in linhas_brutas:
+                # Verificamos se o dado já veio separado (pelo Regex) ou se precisa dividir
+                # d[6] = Faltas, d[7] = Situação
+                if len(d) >= 8 and d[7].strip() != "":
+                    faltas = d[6]
+                    situacao = d[7]
+                else:
+                    # Se d[7] estiver vazio, tentamos extrair ambos de d[6]
+                    faltas, situacao = self.separar_faltas_situacao(d[6])
+
+                ws.append([
+                    dados_aluno["nome"], 
+                    dados_aluno["cpf"], 
+                    dados_aluno["curso"], 
+                    dados_aluno["mat"], 
+                    d[0], # Ord
+                    d[1], # Semestre
+                    d[2], # Disciplina
+                    d[3], # Professor
+                    d[4], # CH
+                    d[5], # Média
+                    faltas, 
+                    situacao
+                ])
+            # CHAMADA DO NOVO MÉTODO DE MÉDIAS
+            self.calcular_medias_semestrais(ws, dados_aluno["nome"])
+
+            safe_nome = re.sub(r"[^\w]", "", dados_aluno["nome"])[:15] or "Aluno"
+            nome_saida = f"Relatorio_{dados_aluno['mat']}_{safe_nome}.xlsx"
+            wb.save(os.path.join(pasta_destino, nome_saida))
+            return True
+
+        except Exception as e:
+            print(f"Erro interno no arquivo {caminho}: {e}")
+            return False
 
     def calcular_medias_semestrais(self, worksheet, nome_aluno):
         agrupamento = {}
+        # min_row=2 para pular o cabeçalho
         for row in worksheet.iter_rows(min_row=2, values_only=True):
-            sem_raw = str(row[4] or '').strip()
-            nota_raw = str(row[8] or '').strip().replace(',', '.')
+            # Se a linha estiver vazia ou for o início da nova tabela, para a leitura
+            if not row[0] or "APLICANTE" in str(row[0]): break
+            
+            # Ajustado para os índices reais da sua planilha: Semestre(5) e Média(9)
+            sem_raw = str(row[5] or '').strip()
+            nota_raw = str(row[9] or '').strip().replace(',', '.')
+            
             match_sem = re.search(r'(\d{4}[\./]\d|\d+)', sem_raw)
             if match_sem:
                 sem_id = match_sem.group(0).replace('/', '.')
@@ -172,6 +387,7 @@ class LeitorPDFApp:
         worksheet.append([f"APLICANTE: {nome_aluno}"])
         worksheet.append(["Semestre", "Soma Notas", "Qtd. Disciplinas Validadas", "Média Período"])
         
+        # Pega os 4 primeiros períodos encontrados e sorteia
         periodos = sorted(agrupamento.keys())[:4]
         medias_finais = []
         for sem in periodos:
@@ -184,53 +400,34 @@ class LeitorPDFApp:
             worksheet.append([])
             worksheet.append(["MÉDIA GERAL (DOS 4 SEMESTRES):", "", "", round(sum(medias_finais)/len(medias_finais), 2)])
 
-    def extrair_dados(self, caminho, pasta_destino):
-        try:
-            with pdfplumber.open(caminho) as pdf:
-                text = "".join([p.extract_text() or "" for p in pdf.pages])
-                tabelas = [tab for p in pdf.pages for tab in (p.extract_tables() or [])]
+    def quebrar_linha_colapsada(self, linha_texto):
+        linha_texto = re.sub(r'\s+', ' ', linha_texto).strip()
+        padrao = re.match(r'^(\d+)\s+(20\d{2}\.\d)\s+(.+?)\s+(.+?)\s+(\d+h)\s+([\d,]+)\s+(\d+)\s+(.+)$', linha_texto)
+        if padrao: return list(padrao.groups())
+        return None
 
-            if "Histórico" not in text: return False
+    def processar_arquivos(self, pasta):
+        arquivos = [f for f in os.listdir(pasta) if f.lower().endswith(".pdf")]
+        if not arquivos:
+            self.log("Nenhum PDF encontrado.")
+            self.root.after(0, lambda: self.btn_iniciar.config(state="normal"))
+            return
 
-            n_match = re.search(r'(?:Aluno\(a\):|Nome:)\s*(.*?)(?=\s*Nascimento:|\n|\r|$)', text, re.IGNORECASE)
-            nome_aluno = n_match.group(1).split('\n')[0].strip() if n_match else "Desconhecido"
-            
-            cpf = (re.search(r'CPF:\s*([\d\.\-]+)', text) or re.search(r'(\d{3}\.\d{3}\.\d{3}-\d{2})', text))
-            mat = re.search(r'Matrícula:\s*(\d+)', text)
-            cur = re.search(r'Curso:\s*(.+)', text)
+        self.progress["maximum"] = len(arquivos)
+        sucessos = 0
+        for i, nome_arq in enumerate(arquivos):
+            caminho = os.path.join(pasta, nome_arq)
+            self.root.after(0, lambda v=i + 1: self.status_var.set(f"Processando {v}..."))
+            if self.extrair_dados(caminho, pasta):
+                self.log(f"OK: {nome_arq}")
+                sucessos += 1
+            else:
+                self.log(f"ERRO: {nome_arq}")
+            self.root.after(0, lambda v=i + 1: self.progress.configure(value=v))
 
-            c_val = cpf.group(1) if cpf else "N/A"
-            m_val = mat.group(1) if mat else "N/A"
-            cu_val = cur.group(1).split('Matrícula')[0].strip() if cur else "N/A"
-            
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.append(["Nome", "CPF", "Curso", "Matrícula", "Semestre", "Disciplina", "Professor", "Carga Horária", "Média Final", "Faltas", "Situação"])
+        self.root.after(0, lambda: self.btn_iniciar.config(state="normal"))
+        self.root.after(0, lambda: messagebox.showinfo("Fim", f"Processados: {sucessos}\nTotal: {len(arquivos)}"))
 
-            count = 0
-            for tab in tabelas:
-                for lin in tab:
-                    if lin and len(lin) > 0 and str(lin[0]).strip().replace('\n', '').isdigit():
-                        for item in self.processar_linha_ancorada(lin):
-                            ws.append([nome_aluno, c_val, cu_val, m_val] + item[1:])
-                            count += 1
-
-            if count > 0:
-                self.calcular_medias_semestrais(ws, nome_aluno)
-                
-                # Limpa o nome do aluno para o arquivo
-                nome_limpo = "".join(x for x in nome_aluno if x.isalnum() or x==' ').replace(' ', '_')
-                
-                # NOVO: Define o nome do arquivo incluindo a matrícula (m_val)
-                nome_arquivo_final = f"relatorio_{m_val}_{nome_limpo}.xlsx"
-                
-                # Salva com o novo nome
-                wb.save(os.path.join(pasta_destino, nome_arquivo_final))
-                return True
-            return False
-        except Exception as e:
-            print(f"Erro interno: {e}")
-            return False
 
 if __name__ == "__main__":
     root = tk.Tk()
